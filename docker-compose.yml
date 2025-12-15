@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -9,15 +11,11 @@ services:
       POSTGRES_DB: mydb
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
 
   ollama:
     image: ollama/ollama:latest
     container_name: bot-ollama
     restart: unless-stopped
-    ports:
-      - "11434:11434"
     command: ["serve"]
 
   backend:
@@ -25,6 +23,7 @@ services:
       context: .
       dockerfile: src/backend/Dockerfile
     container_name: bot-backend
+    restart: unless-stopped
     depends_on:
       - postgres
       - ollama
@@ -32,8 +31,6 @@ services:
       - "8000:8000"
     env_file:
       - .env
-    volumes:
-      - .:/workspace
 
 volumes:
   pgdata:
