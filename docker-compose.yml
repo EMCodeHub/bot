@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: bot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secret123!
+      POSTGRES_DB: mydb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: bot-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    command: ["serve"]
+
+  backend:
+    build:
+      context: .
+      dockerfile: src/backend/Dockerfile
+    container_name: bot-backend
+    depends_on:
+      - postgres
+      - ollama
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - .:/workspace
+
+volumes:
+  pgdata:

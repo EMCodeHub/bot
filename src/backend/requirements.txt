@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+requests
+pydantic
+pydantic-settings
+pydantic[email]
+python-dotenv
+psycopg2-binary
+numpy
+phonenumbers
+pgvector
+pytest
