@@ -4,14 +4,13 @@ import uuid
 from pathlib import Path
 from typing import Generator, Optional
 
-import requests
-
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
 from backend.app.config import settings
 from backend.app.db.postgres import get_connection
+from backend.app.llm.ollama_client import request_embedding_vector
 from backend.app.utils.text import normalize_text
 from backend.app.utils.vector import normalize_embedding
 
@@ -22,7 +21,7 @@ BASE_DIR = ROOT_DIR / "knowledge_base"
 
 if not BASE_DIR.exists():
     raise FileNotFoundError(
-        f"No se encontró el directorio {BASE_DIR}. Coloca `knowledge_base` dentro de src/."
+        f"No se encontro el directorio {BASE_DIR}. Coloca `knowledge_base` dentro de src/."
     )
 
 ENCODINGS = ("utf-8", "utf-8-sig", "latin-1")
@@ -128,16 +127,10 @@ def embed(text: str) -> tuple[list[float], float]:
     """Request an embedding from Ollama and normalize it."""
     normalized = normalize_text(text)
     try:
-        response = requests.post(
-            f"{settings.ollama_url}/api/embeddings",
-            json={"model": settings.embedding_model, "prompt": normalized},
-            timeout=settings.ollama_timeout,
-        )
-        response.raise_for_status()
-    except requests.RequestException as exc:
+        embedding = request_embedding_vector(normalized)
+    except RuntimeError as exc:
         raise RuntimeError(f"Error requesting embedding: {exc}") from exc
 
-    embedding = response.json().get("embedding") or []
     return normalize_embedding(embedding, settings.embedding_dimension)
 
 
