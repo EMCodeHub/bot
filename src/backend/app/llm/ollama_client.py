@@ -1,82 +1,98 @@
+import time
+from typing import Any
+
 import requests
-from typing import Sequence, Tuple
+from requests import HTTPError, RequestException
 
 from app.config import settings
+from app.utils.logger import get_logger
 
-def _format_url(endpoint: str) -> str:
-    base = settings.ollama_url.rstrip("/")
+logger = get_logger(__name__)
+
+
+class OllamaRequestError(RuntimeError):
+    """Represents a failed HTTP call against the Ollama API."""
+
+    def __init__(self, endpoint: str, status_code: int | None = None, detail: str | None = None):
+        detail = detail or "Ollama request failed without details."
+        message = f"Ollama {endpoint} error"
+        if status_code:
+            message += f" (status={status_code})"
+        super().__init__(detail)
+        self.endpoint = endpoint
+        self.status_code = status_code
+        self.detail = detail
+
+
+def _ollama_url(endpoint: str) -> str:
+    base = settings.ollama_base_url.rstrip("/")
     return f"{base}{endpoint}"
 
-def _call_ollama_endpoint(
-    endpoint_payloads: Sequence[Tuple[str, dict]], timeout: float
-) -> dict:
-    errors: list[str] = []
-    for endpoint, payload in endpoint_payloads:
-        url = _format_url(endpoint)
+
+def _should_retry(status_code: int | None) -> bool:
+    if status_code is None:
+        return True
+    return status_code >= 500
+
+
+def _post_to_ollama(endpoint: str, payload: dict, timeout: float) -> dict[str, Any]:
+    url = _ollama_url(endpoint)
+    last_error: OllamaRequestError | None = None
+    for attempt in range(settings.ollama_http_retries):
         try:
             response = requests.post(url, json=payload, timeout=timeout)
-        except requests.RequestException as exc:
-            raise RuntimeError(f"Error calling Ollama {endpoint}: {exc}") from exc
-        if response.status_code == 404:
-            errors.append(f"{endpoint}=404")
-            continue
-        try:
             response.raise_for_status()
-        except requests.HTTPError as exc:
-            raise RuntimeError(
-                f"Ollama {endpoint} failed with status {response.status_code}"
-            ) from exc
-        return response.json()
-    attempted = ", ".join(endpoint for endpoint, _ in endpoint_payloads)
-    status_info = ", ".join(errors) if errors else "no responses"
-    raise RuntimeError(
-        "None of the Ollama endpoints responded successfully "
-        f"(tried {attempted}; {status_info})."
-    )
+            return response.json()
+        except HTTPError as exc:
+            status_code = exc.response.status_code if exc.response else None
+            detail = exc.response.text if exc.response else str(exc)
+            last_error = OllamaRequestError(endpoint, status_code, detail)
+            logger.warning(
+                "Ollama %s returned %s; detail=%s",
+                endpoint,
+                status_code,
+                detail.strip(),
+            )
+            if not _should_retry(status_code):
+                break
+        except RequestException as exc:
+            detail = str(exc)
+            last_error = OllamaRequestError(endpoint, None, detail)
+            logger.warning("Network failure when calling Ollama %s: %s", endpoint, detail)
+        if attempt < settings.ollama_http_retries - 1:
+            backoff = settings.ollama_retry_backoff * (attempt + 1)
+            logger.debug(
+                "Retrying Ollama %s (attempt %d/%d) after %.1fs",
+                endpoint,
+                attempt + 1,
+                settings.ollama_http_retries,
+                backoff,
+            )
+            time.sleep(backoff)
+    if last_error:
+        logger.error(
+            "Ollama %s failed after %d attempts: %s",
+            endpoint,
+            settings.ollama_http_retries,
+            last_error.detail,
+        )
+        raise last_error
+    raise OllamaRequestError(endpoint, detail="Failed to connect to Ollama.")
 
-def _filter_vector_candidate(raw: object) -> list[float] | None:
-    if raw is None:
-        return None
-    if isinstance(raw, dict):
-        for key in ("data", "values", "vector", "embedding"):
-            candidate = raw.get(key)  # type: ignore[attr-defined]
-            vector = _filter_vector_candidate(candidate)
-            if vector:
-                return vector
-        return None
-    if isinstance(raw, (list, tuple)):
-        if not raw:
-            return None
-        if all(isinstance(item, (float, int)) for item in raw):
-            return [float(item) for item in raw]
-        first = raw[0]
-        return _filter_vector_candidate(first)
-    return None
-
-def _extract_embedding_vector(data: dict) -> list[float] | None:
-    for key in ("embedding", "vector"):
-        candidate = data.get(key)
-        vector = _filter_vector_candidate(candidate)
-        if vector:
-            return vector
-    embeddings = data.get("embeddings")
-    vector = _filter_vector_candidate(embeddings)
-    if vector:
-        return vector
-    return _filter_vector_candidate(data.get("data"))
 
 def request_embedding_vector(text: str) -> list[float]:
-    payloads = (
-        ("/api/embed", {"model": settings.embedding_model, "text": text}),
-        ("/api/embeddings", {"model": settings.embedding_model, "prompt": text}),
-    )
-    data = _call_ollama_endpoint(payloads, settings.ollama_timeout)
-    embedding = _extract_embedding_vector(data)
-    if not embedding:
-        raise RuntimeError("Ollama response missing embedding vector.")
+    payload = {
+        "model": settings.ollama_embed_model,
+        "prompt": text,
+    }
+    data = _post_to_ollama("/api/embeddings", payload, settings.ollama_timeout)
+    embedding = data.get("embedding")
+    if not isinstance(embedding, list):
+        raise RuntimeError(f"Ollama response missing embedding: {data}")
     return embedding
 
-def _extract_generated_text(data: dict) -> str:
+
+def _extract_generated_text(data: dict[str, Any]) -> str:
     for key in ("response", "generated_text", "text", "completion", "result"):
         value = data.get(key)
         if isinstance(value, str) and value.strip():
@@ -97,38 +113,73 @@ def _extract_generated_text(data: dict) -> str:
                     return content.strip()
     return ""
 
+
 def generate_response(
     prompt: str,
     model: str | None = None,
     temperature: float | None = None,
     top_p: float | None = None,
 ) -> str:
-    model_name = model or settings.ollama_model
+    model_name = model or settings.ollama_chat_model
     temp = temperature if temperature is not None else settings.ollama_temperature
-    top_k = top_p if top_p is not None else settings.ollama_top_p
-    payloads = (
-        (
-            "/api/generate",
-            {
-                "model": model_name,
-                "prompt": prompt,
-                "stream": False,
-                "temperature": temp,
-                "top_p": top_k,
-            },
-        ),
-        (
-            "/api/chat",
-            {
-                "model": model_name,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": temp,
-                "top_p": top_k,
-            },
-        ),
-    )
-    data = _call_ollama_endpoint(payloads, settings.ollama_generate_timeout)
+    selected_top_p = top_p if top_p is not None else settings.ollama_top_p
+    payload = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temp,
+        "top_p": selected_top_p,
+        "stream": False,
+    }
+    data = _post_to_ollama("/api/chat", payload, settings.ollama_generate_timeout)
     text = _extract_generated_text(data)
     if not text:
         raise RuntimeError("Ollama response missing generated text.")
     return text
+
+
+def _ping_base_url() -> tuple[bool, str]:
+    url = settings.ollama_base_url
+    try:
+        response = requests.get(url, timeout=settings.ollama_health_timeout)
+        response.raise_for_status()
+        return True, "Ollama base URL reachable"
+    except RequestException as exc:
+        detail = str(exc)
+        logger.warning("Failed to reach Ollama base URL: %s", detail)
+        return False, detail
+
+
+def _safe_health_call(endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {"endpoint": endpoint, "ok": False}
+    try:
+        _post_to_ollama(endpoint, payload, settings.ollama_health_timeout)
+        result["ok"] = True
+        result["detail"] = "ok"
+        return result
+    except OllamaRequestError as exc:
+        result["status_code"] = exc.status_code
+        result["detail"] = exc.detail
+        return result
+
+
+def get_ollama_health() -> dict[str, Any]:
+    reachable, detail = _ping_base_url()
+    health = {"reachable": reachable, "detail": detail}
+    if not reachable:
+        return health
+
+    health["embedding"] = _safe_health_call(
+        "/api/embeddings",
+        {"model": settings.ollama_embed_model, "prompt": "ping"},
+    )
+    health["chat"] = _safe_health_call(
+        "/api/chat",
+        {
+            "model": settings.ollama_chat_model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "stream": False,
+        },
+    )
+    return health

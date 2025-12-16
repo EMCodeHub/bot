@@ -27,7 +27,16 @@ Arrancas desde el shell del VPS como `root@vmi2970910:~#`; cada bloque de comand
    cd bot
    cp .env.example .env
    ```
-   Ajusta `.env` si necesitas otros datos para `POSTGRES_*`, `OLLAMA_*` o SMTP; por defecto el stack usa los servicios definidos en este Compose.
+   Ajusta `.env` si necesitas otros datos para `POSTGRES_*`, `OLLAMA_*` o SMTP; en especial puedes fijar:
+   - `OLLAMA_BASE_URL` (o el legado `OLLAMA_URL`)
+   - `OLLAMA_CHAT_MODEL` / `OLLAMA_EMBED_MODEL`
+   - `OLLAMA_TIMEOUT` para darle más tiempo a Ollama que suba los modelos.
+  Puedes afinar cuánto espera el backend antes de dar error al conectarse con Postgres añadiendo:
+  ```ini
+  DB_CONN_RETRIES=10
+  DB_CONN_RETRY_DELAY=2.0
+  ```
+  (estas variables no son estrictas, sirven para dar tiempo al contenedor de Postgres).
 
 4. **Levantar la pila en segundo plano**
    ```bash

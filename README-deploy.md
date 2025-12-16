@@ -26,6 +26,7 @@
    - Copy the template: `cp .env.example .env`.
    - Edit `.env` with production secrets (Postgres password, Ollama key if needed, Stripe/SMTP credentials, allowed hosts, etc.).
    - Ensure `PGHOST`, `PGPASSWORD`, `DATABASE_URL` and other variables are set for the VPS network.
+   - If necessary override the Ollama settings via `OLLAMA_BASE_URL`, `OLLAMA_CHAT_MODEL`, `OLLAMA_EMBED_MODEL` and `OLLAMA_TIMEOUT`.
 6. **Start the stack**:
    ```
    docker compose up -d --build
