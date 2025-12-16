@@ -1,5 +1,4 @@
 import json
-import json
 import time
 from typing import Any
 
@@ -98,6 +97,16 @@ def request_embedding_vector(text: str) -> list[float]:
     return embedding
 
 
+def _extract_message_content(data: dict[str, Any]) -> str:
+    message = data.get("message")
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+    return ""
+
+
 def _extract_generated_text(data: dict[str, Any]) -> str:
     for key in ("response", "generated_text", "text", "completion", "result"):
         value = data.get(key)
@@ -118,6 +127,13 @@ def _extract_generated_text(data: dict[str, Any]) -> str:
                 if isinstance(content, str) and content.strip():
                     return content.strip()
     return ""
+
+
+def _resolve_model_response_text(data: dict[str, Any]) -> str:
+    content = _extract_message_content(data)
+    if content:
+        return content
+    return _extract_generated_text(data)
 
 
 def _payload_brief(data: dict[str, Any]) -> str:
@@ -155,13 +171,17 @@ def generate_response(
             "/api/chat",
             detail=detail or f"Ollama error payload: {_payload_brief(data)}",
         )
-    text = _extract_generated_text(data)
+    text = _resolve_model_response_text(data)
     if not text:
-        raise OllamaRequestError(
-            "/api/chat",
-            detail=f"Ollama chat replied without text: {_payload_brief(data)}",
-            status_code=None,
-        )
+        payload_brief = _payload_brief(data)
+        logger.warning("Ollama chat response missing text payload: %s", payload_brief)
+        if data.get("done"):
+            raise OllamaRequestError(
+                "/api/chat",
+                detail=f"Ollama chat replied without text: {payload_brief}",
+                status_code=None,
+            )
+        return ""
     return text
 
 
