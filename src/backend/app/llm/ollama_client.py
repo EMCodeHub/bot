@@ -1,3 +1,5 @@
+import json
+import json
 import time
 from typing import Any
 
@@ -40,7 +42,11 @@ def _post_to_ollama(endpoint: str, payload: dict, timeout: float) -> dict[str, A
     last_error: OllamaRequestError | None = None
     for attempt in range(settings.ollama_http_retries):
         try:
-            response = requests.post(url, json=payload, timeout=timeout)
+            response = requests.post(
+                url,
+                json=payload,
+                timeout=(settings.ollama_connect_timeout, timeout),
+            )
             response.raise_for_status()
             return response.json()
         except HTTPError as exc:
@@ -114,6 +120,13 @@ def _extract_generated_text(data: dict[str, Any]) -> str:
     return ""
 
 
+def _payload_brief(data: dict[str, Any]) -> str:
+    try:
+        return json.dumps(data, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return str(data)
+
+
 def generate_response(
     prompt: str,
     model: str | None = None,
@@ -131,9 +144,24 @@ def generate_response(
         "stream": False,
     }
     data = _post_to_ollama("/api/chat", payload, settings.ollama_generate_timeout)
+    if "error" in data:
+        error_value = data["error"]
+        detail = (
+            error_value.get("message")
+            if isinstance(error_value, dict)
+            else str(error_value)
+        )
+        raise OllamaRequestError(
+            "/api/chat",
+            detail=detail or f"Ollama error payload: {_payload_brief(data)}",
+        )
     text = _extract_generated_text(data)
     if not text:
-        raise RuntimeError("Ollama response missing generated text.")
+        raise OllamaRequestError(
+            "/api/chat",
+            detail=f"Ollama chat replied without text: {_payload_brief(data)}",
+            status_code=None,
+        )
     return text
 
 

@@ -15,11 +15,12 @@ class Settings(BaseSettings):
     ollama_embed_model: str = Field(
         "nomic-embed-text", env=["OLLAMA_EMBED_MODEL", "EMBEDDING_MODEL"]
     )
-    ollama_timeout: float = Field(120.0, env="OLLAMA_TIMEOUT")
-    ollama_generate_timeout: float = Field(300.0, env="OLLAMA_GENERATE_TIMEOUT")
-    ollama_health_timeout: float = Field(5.0, env="OLLAMA_HEALTH_TIMEOUT")
-    ollama_http_retries: int = Field(3, env="OLLAMA_RETRY_ATTEMPTS")
-    ollama_retry_backoff: float = Field(1.0, env="OLLAMA_RETRY_BACKOFF")
+    ollama_connect_timeout: float = Field(20.0, env="OLLAMA_CONNECT_TIMEOUT")
+    ollama_timeout: float = Field(180.0, env="OLLAMA_TIMEOUT")
+    ollama_generate_timeout: float = Field(240.0, env="OLLAMA_GENERATE_TIMEOUT")
+    ollama_health_timeout: float = Field(180.0, env="OLLAMA_HEALTH_TIMEOUT")
+    ollama_http_retries: int = Field(5, env="OLLAMA_RETRY_ATTEMPTS")
+    ollama_retry_backoff: float = Field(5.0, env="OLLAMA_RETRY_BACKOFF")
     ollama_temperature: float = 0.0
     ollama_top_p: float = 1.0
 

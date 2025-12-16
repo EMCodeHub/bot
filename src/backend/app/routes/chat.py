@@ -22,7 +22,7 @@ from app.db.vector_store import (
     search_similar,
 )
 from app.llm.embeddings import embed_query
-from app.llm.ollama_client import generate_response
+from app.llm.ollama_client import OllamaRequestError, generate_response
 from app.models.chat import ChatRequest, ChatResponse
 from app.utils.logger import get_logger
 from app.utils.text import normalize_text
@@ -637,6 +637,9 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 temperature=settings.ollama_temperature,
                 top_p=settings.ollama_top_p,
             )
+        except OllamaRequestError:
+            logger.exception("Error calling Ollama generate_response for conv=%s", conversation_id)
+            answer = FALLBACK_RESPONSE
         except Exception:
             logger.exception("Error calling Ollama generate_response for conv=%s", conversation_id)
             raise HTTPException(
